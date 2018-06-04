@@ -321,8 +321,9 @@ func (e *mutableStateBuilder) updateReplicationStateVersion(version int64) {
 
 // Assumption: It is expected CurrentVersion on replication state is updated at the start of transaction when
 // mutableState is loaded for this workflow execution.
-func (e *mutableStateBuilder) updateReplicationStateLastEventID(clusterName string, lastEventID int64) {
-	e.replicationState.LastWriteVersion = e.replicationState.CurrentVersion
+func (e *mutableStateBuilder) updateReplicationStateLastEventID(clusterName string, lastWriteVersion,
+	lastEventID int64) {
+	e.replicationState.LastWriteVersion = lastWriteVersion
 	// TODO: Rename this to NextEventID to stay consistent naming convention with rest of code base
 	e.replicationState.LastWriteEventID = lastEventID
 	if clusterName != "" {

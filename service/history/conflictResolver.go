@@ -62,6 +62,7 @@ func (r *conflictResolver) reset(replayEventID int64, startTime time.Time) (*mut
 	var resetMutableStateBuilder *mutableStateBuilder
 	var sBuilder *stateBuilder
 	var lastFirstEventID int64
+	var lastEvent *shared.HistoryEvent
 	eventsToApply := replayNextEventID - common.FirstEventID
 	requestID := uuid.New()
 	for hasMore := true; hasMore; hasMore = len(nextPageToken) > 0 {
@@ -87,6 +88,7 @@ func (r *conflictResolver) reset(replayEventID int64, startTime time.Time) (*mut
 		}
 
 		firstEvent := history.Events[0]
+		lastEvent = history.Events[len(history.Events)-1]
 		if firstEvent.GetEventId() == common.FirstEventID {
 			resetMutableStateBuilder = newMutableStateBuilderWithReplicationState(r.shard.GetConfig(), r.logger,
 				firstEvent.GetVersion())
@@ -106,6 +108,7 @@ func (r *conflictResolver) reset(replayEventID int64, startTime time.Time) (*mut
 	resetMutableStateBuilder.executionInfo.StartTimestamp = startTime
 	// the last updated time is not important here, since this should be updated with event time afterwards
 	resetMutableStateBuilder.executionInfo.LastUpdatedTimestamp = startTime
+	resetMutableStateBuilder.updateReplicationStateLastEventID("", lastEvent.GetVersion(), lastEvent.GetEventId())
 
 	r.logger.Infof("All events applied for execution.  WorkflowID: %v, RunID: %v, NextEventID: %v",
 		execution.GetWorkflowId(), execution.GetRunId(), resetMutableStateBuilder.GetNextEventID())

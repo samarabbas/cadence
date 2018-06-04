@@ -143,7 +143,8 @@ func (r *historyReplicator) ApplyEvents(request *h.ReplicateEventsRequest) (retE
 
 				resolver := newConflictResolver(r.shard, context, r.historyMgr, r.logger)
 				msBuilder, err = resolver.reset(ri.GetLastEventId(), msBuilder.executionInfo.StartTimestamp)
-				r.logger.Infof("Completed Resetting of workflow execution: Err: %v", err)
+				r.logger.Infof("Completed Resetting of workflow execution.  WorkflowID: %v, RunID: %v, NextEventID:%v. Err: %v",
+					msBuilder.executionInfo.WorkflowID, msBuilder.executionInfo.RunID, msBuilder.GetNextEventID(), err)
 				if err != nil {
 					return err
 				}
@@ -152,12 +153,21 @@ func (r *historyReplicator) ApplyEvents(request *h.ReplicateEventsRequest) (retE
 
 		// Check for duplicate processing of replication task
 		if firstEvent.GetEventId() < msBuilder.GetNextEventID() {
+			r.logger.Warnf("Dropping replication task.  State: {NextEvent: %v, Version: %v, LastWriteV: %v, LastWriteEvent: %v}, Replication Task: {Source: %v, Version: %v, First: %v, FirstHistoryEvent: %v}",
+				msBuilder.GetNextEventID(), msBuilder.replicationState.CurrentVersion, msBuilder.replicationState.LastWriteVersion,
+				msBuilder.replicationState.LastWriteEventID, request.GetSourceCluster(), request.GetVersion(), request.GetFirstEventId(),
+				firstEvent.GetEventId())
 			return nil
 		}
 
 		// Check for out of order replication task and store it in the buffer
 		if firstEvent.GetEventId() > msBuilder.GetNextEventID() {
+			r.logger.Infof("Buffer out of order replication task.  WorkflowID: %v, RunID: %v, NextEvent: %v, FirstEvent: %v",
+			msBuilder.executionInfo.WorkflowID, msBuilder.executionInfo.RunID, msBuilder.GetNextEventID(),
+			firstEvent.GetEventId())
 			if err := msBuilder.BufferReplicationTask(request); err != nil {
+				r.logger.Errorf("Failed to buffer out of order replication task.  WorkflowID: %v, RunID: %v, Err: %v",
+					msBuilder.executionInfo.WorkflowID, msBuilder.executionInfo.RunID, err)
 				return errors.New("failed to add buffered replication task")
 			}
 
@@ -168,17 +178,28 @@ func (r *historyReplicator) ApplyEvents(request *h.ReplicateEventsRequest) (retE
 	// First check if there are events which needs to be flushed before applying the update
 	err = r.FlushBuffer(context, msBuilder, request)
 	if err != nil {
+		r.logger.Errorf("Fail to flush buffer.  WorkflowID: %v, RunID: %v, NextEvent: %v, FirstEvent: %v, Err: %v",
+			msBuilder.executionInfo.WorkflowID, msBuilder.executionInfo.RunID, msBuilder.GetNextEventID(),
+			firstEvent.GetEventId(), err)
 		return err
 	}
 
 	// Apply the replication task
 	err = r.ApplyReplicationTask(context, msBuilder, request)
 	if err != nil {
+		r.logger.Errorf("Fail to Apply Replication task.  WorkflowID: %v, RunID: %v, NextEvent: %v, FirstEvent: %v, Err: %v",
+			msBuilder.executionInfo.WorkflowID, msBuilder.executionInfo.RunID, msBuilder.GetNextEventID(),
+			firstEvent.GetEventId(), err)
 		return err
 	}
 
 	// Flush buffered replication tasks after applying the update
 	err = r.FlushBuffer(context, msBuilder, request)
+	if err != nil {
+		r.logger.Errorf("Fail to flush buffer.  WorkflowID: %v, RunID: %v, NextEvent: %v, FirstEvent: %v, Err: %v",
+			msBuilder.executionInfo.WorkflowID, msBuilder.executionInfo.RunID, msBuilder.GetNextEventID(),
+			firstEvent.GetEventId(), err)
+	}
 
 	return err
 }
