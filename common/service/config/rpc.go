@@ -21,6 +21,7 @@
 package config
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 
@@ -54,9 +55,20 @@ func (d *RPCFactory) CreateDispatcher() *yarpc.Dispatcher {
 	// Setup dispatcher for onebox
 	var err error
 	hostAddress := fmt.Sprintf("%v:%v", d.getListenIP(), d.config.Port)
+	cer, err := tls.LoadX509KeyPair("server.crt", "server.key")
+	if err != nil {
+		d.logger.Fatal("Failed to load cert.", tag.Error(err))
+	}
+
+	config := &tls.Config{Certificates: []tls.Certificate{cer}}
+	ln, err := tls.Listen("tcp", hostAddress, config)
+	if err != nil {
+		d.logger.Fatal("Failed to create listener", tag.Error(err))
+	}
 	d.ch, err = tchannel.NewChannelTransport(
 		tchannel.ServiceName(d.serviceName),
-		tchannel.ListenAddr(hostAddress))
+		//tchannel.ListenAddr(hostAddress),
+		tchannel.Listener(ln))
 	if err != nil {
 		d.logger.Fatal("Failed to create transport channel", tag.Error(err))
 	}
