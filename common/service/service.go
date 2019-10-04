@@ -21,6 +21,8 @@
 package service
 
 import (
+	"fmt"
+	"go.uber.org/yarpc/transport/tchannel"
 	"math/rand"
 	"os"
 	"sync/atomic"
@@ -94,6 +96,7 @@ type (
 		hostName              string
 		hostInfo              *membership.HostInfo
 		dispatcher            *yarpc.Dispatcher
+		ringDispatcher        *yarpc.Dispatcher
 		membershipFactory     MembershipMonitorFactory
 		membershipMonitor     membership.Monitor
 		rpcFactory            common.RPCFactory
@@ -150,6 +153,23 @@ func New(params *BootstrapParams) Service {
 		sVice.logger.Fatal("Unable to create yarpc dispatcher")
 	}
 
+	ringpopListenIP := "127.0.0.1"
+	ringpopListenPort := sVice.rpcFactory.(*config.RPCFactory).SConfig.Port + 2000
+	ringPopListenAddress := fmt.Sprintf("%v:%v", ringpopListenIP, ringpopListenPort)
+	ringpopCh, err := tchannel.NewChannelTransport(
+		tchannel.ServiceName(sVice.sName),
+		tchannel.ListenAddr(ringPopListenAddress))
+	if err != nil {
+		sVice.logger.Fatal("Failed to create transport channel for ringpop", tag.Error(err))
+	}
+	sVice.ringDispatcher = yarpc.NewDispatcher(yarpc.Config{
+		Name:     sVice.sName,
+		Inbounds: yarpc.Inbounds{ringpopCh.NewInbound()},
+	})
+	if sVice.ringDispatcher == nil {
+		sVice.logger.Fatal("Unable to create yarpc dispatcher for ringpop")
+	}
+
 	// Get the host name and set it on the service.  This is used for emitting metric with a tag for hostname
 	if hostName, err := os.Hostname(); err != nil {
 		sVice.logger.WithTags(tag.Error(err)).Fatal("Error getting hostname")
@@ -189,7 +209,11 @@ func (h *serviceImpl) Start() {
 		h.logger.WithTags(tag.Error(err)).Fatal("Failed to start yarpc dispatcher")
 	}
 
-	h.membershipMonitor, err = h.membershipFactory.Create(h.dispatcher)
+	if err := h.ringDispatcher.Start(); err != nil {
+		h.logger.WithTags(tag.Error(err)).Fatal("Failed to start yarpc dispatcher for ring")
+	}
+
+	h.membershipMonitor, err = h.membershipFactory.Create(h.ringDispatcher)
 	if err != nil {
 		h.logger.WithTags(tag.Error(err)).Fatal("Membership monitor creation failed")
 	}

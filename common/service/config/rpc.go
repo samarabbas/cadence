@@ -22,7 +22,9 @@ package config
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io/ioutil"
 	"net"
 
 	"github.com/uber/cadence/common/log"
@@ -37,6 +39,7 @@ type RPCFactory struct {
 	serviceName string
 	ch          *tchannel.ChannelTransport
 	logger      log.Logger
+	SConfig     *RPC
 }
 
 // NewFactory builds a new RPCFactory
@@ -46,37 +49,70 @@ func (cfg *RPC) NewFactory(sName string, logger log.Logger) *RPCFactory {
 }
 
 func newRPCFactory(cfg *RPC, sName string, logger log.Logger) *RPCFactory {
-	factory := &RPCFactory{config: cfg, serviceName: sName, logger: logger}
+	factory := &RPCFactory{config: cfg, serviceName: sName, logger: logger, SConfig: cfg}
 	return factory
 }
 
+
 // CreateDispatcher creates a dispatcher for inbound
 func (d *RPCFactory) CreateDispatcher() *yarpc.Dispatcher {
+	enabled := true
+	certFile := "server.crt"
+	keyFile := "server.key"
+	bundleFile := ""
+
 	// Setup dispatcher for onebox
-	var err error
 	hostAddress := fmt.Sprintf("%v:%v", d.getListenIP(), d.config.Port)
-	cer, err := tls.LoadX509KeyPair("server.crt", "server.key")
-	if err != nil {
-		d.logger.Fatal("Failed to load cert.", tag.Error(err))
+	if enabled {
+		config, err := createTLSConfig(enabled, certFile, keyFile, bundleFile)
+		ln, err := tls.Listen("tcp", hostAddress, config)
+		if err != nil {
+			d.logger.Fatal("Failed to create listener", tag.Error(err))
+		}
+
+		d.ch, err = tchannel.NewChannelTransport(
+			tchannel.ServiceName(d.serviceName),
+			//tchannel.ListenAddr(hostAddress),
+			tchannel.Listener(ln))
+		if err != nil {
+			d.logger.Fatal("Failed to create transport channel", tag.Error(err))
+		}
 	}
 
-	config := &tls.Config{Certificates: []tls.Certificate{cer}}
-	ln, err := tls.Listen("tcp", hostAddress, config)
-	if err != nil {
-		d.logger.Fatal("Failed to create listener", tag.Error(err))
-	}
-	d.ch, err = tchannel.NewChannelTransport(
-		tchannel.ServiceName(d.serviceName),
-		//tchannel.ListenAddr(hostAddress),
-		tchannel.Listener(ln))
-	if err != nil {
-		d.logger.Fatal("Failed to create transport channel", tag.Error(err))
-	}
 	d.logger.Info("Created RPC dispatcher and listening", tag.Service(d.serviceName), tag.Address(hostAddress))
 	return yarpc.NewDispatcher(yarpc.Config{
 		Name:     d.serviceName,
 		Inbounds: yarpc.Inbounds{d.ch.NewInbound()},
 	})
+}
+
+func createTLSConfig(enabled bool, certFile string, keyFile string, bundleFile string) (*tls.Config, error) {
+	if !enabled {
+		return nil, nil
+	}
+
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, err
+	}
+
+	if bundleFile == "" {
+		return &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}, nil
+	}
+
+	caCertPool := x509.NewCertPool()
+	pemData, err := ioutil.ReadFile(bundleFile)
+	if err != nil {
+		return nil, err
+	}
+	caCertPool.AppendCertsFromPEM(pemData)
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      caCertPool,
+	}, nil
 }
 
 // CreateDispatcherForOutbound creates a dispatcher for outbound connection
