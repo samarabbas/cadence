@@ -21,6 +21,8 @@
 package membership
 
 import (
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,6 +46,7 @@ const (
 
 type ringpopServiceResolver struct {
 	service    string
+	port       int
 	isStarted  bool
 	isStopped  bool
 	rp         *ringpop.Ringpop
@@ -60,9 +63,10 @@ type ringpopServiceResolver struct {
 
 var _ ServiceResolver = (*ringpopServiceResolver)(nil)
 
-func newRingpopServiceResolver(service string, rp *ringpop.Ringpop, logger log.Logger) *ringpopServiceResolver {
+func newRingpopServiceResolver(service string, port int, rp *ringpop.Ringpop, logger log.Logger) *ringpopServiceResolver {
 	return &ringpopServiceResolver{
 		service:    service,
+		port:       port,
 		rp:         rp,
 		logger:     logger.WithTags(tag.ComponentServiceResolver, tag.Service(service)),
 		ring:       hashring.New(farm.Fingerprint32, replicaPoints),
@@ -128,11 +132,20 @@ func (r *ringpopServiceResolver) Stop() error {
 func (r *ringpopServiceResolver) Lookup(key string) (*HostInfo, error) {
 	r.ringLock.RLock()
 	defer r.ringLock.RUnlock()
+	//r.logger.WithTags(tag.ComponentServiceResolver, tag.Key(key)).Error("**** Lookup host for key")
 	addr, found := r.ring.Lookup(key)
 	if !found {
 		return nil, ErrInsufficientHosts
 	}
-	return NewHostInfo(addr, r.getLabelsMap()), nil
+
+	//r.logger.WithTags(tag.ComponentServiceResolver, tag.Key(key), tag.Address(addr)).Error("**** Address found for key")
+	parts := strings.Split(addr, ":")
+	if len(parts) != 2 {
+		return nil, ErrIncorrectAddressFormat
+	}
+	serviceAddress := fmt.Sprintf("%s:%v", parts[0], r.port)
+	//r.logger.WithTags(tag.ComponentServiceResolver, tag.Key(key), tag.Address(serviceAddress)).Error("**** Resolved to correct address found for key")
+	return NewHostInfo(serviceAddress, r.getLabelsMap()), nil
 }
 
 func (r *ringpopServiceResolver) AddListener(name string, notifyChannel chan<- *ChangedEvent) error {

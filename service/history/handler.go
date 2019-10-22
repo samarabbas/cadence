@@ -105,6 +105,8 @@ func NewHandler(
 	publicClient workflowserviceclient.Interface,
 ) *Handler {
 	domainReplicator := replicator.NewDomainReplicator(metadataMgr, sVice.GetLogger())
+	initialRPS := config.RPS()
+	sVice.GetLogger().WithTags(tag.Value(initialRPS)).Warn("**** Initial RPS for History")
 
 	handler := &Handler{
 		Service:             sVice,
@@ -641,6 +643,7 @@ func (h *Handler) StartWorkflowExecution(
 	}
 
 	if ok := h.rateLimiter.Allow(); !ok {
+		//h.GetLogger().Warn("**** Rate limit exceeded.")
 		return nil, h.error(errHistoryHostThrottle, scope, domainID, "")
 	}
 
@@ -1055,6 +1058,7 @@ func (h *Handler) TerminateWorkflowExecution(
 	}
 
 	if ok := h.rateLimiter.Allow(); !ok {
+		//h.getLoggerWithTags(domainID, "workflowID").Warn("**** Terminate rps exceeded")
 		return h.error(errHistoryHostThrottle, scope, domainID, "")
 	}
 
@@ -1062,11 +1066,14 @@ func (h *Handler) TerminateWorkflowExecution(
 	workflowID := workflowExecution.GetWorkflowId()
 	engine, err1 := h.controller.GetEngine(workflowID)
 	if err1 != nil {
+		//h.getLoggerWithTags(domainID, workflowID).WithTags(tag.Error(err1)).Warn("**** Failed to get Engine")
 		return h.error(err1, scope, domainID, workflowID)
 	}
 
+	//h.getLoggerWithTags(domainID, workflowID).Warn("**** Calling Terminate")
 	err2 := engine.TerminateWorkflowExecution(ctx, wrappedRequest)
 	if err2 != nil {
+		//h.getLoggerWithTags(domainID, workflowID).WithTags(tag.Error(err2)).Warn("**** Terminate failed")
 		return h.error(err2, scope, domainID, workflowID)
 	}
 
